@@ -11,7 +11,7 @@ import {
 
 export function createTypeSafeTriage(apiKey: string): TriagePort {
   const client = new TypeSafeClient({ apiKey });
-  return async (message) => {
+  return async (message, context) => {
     try {
       const response = await client.systemOne({
         state: {
@@ -19,14 +19,19 @@ export function createTypeSafeTriage(apiKey: string): TriagePort {
           guest_name: message.guestName,
           subject: message.subject,
           message: message.message,
+          property_context: context.propertyContext || "(property context not provided yet)",
+          thread:
+            context.history.length > 0
+              ? context.history
+              : "(no earlier messages: this is the first one)",
         },
         questions: {
           category: choice(
-            "A guest of a vacation rental sent the message in `message`. Which category describes it?",
+            "A guest of a vacation rental sent the message in `message`. Check `property_context` (info the owner wrote about the property) and the earlier messages in `thread` (which may already contain answers from the owner): if the information needed to reply is there, the message is answerable without the owner. Which category describes `message`?",
             CATEGORY,
           ),
           owner_topic: choice(
-            "If answering `message` requires information only the property owner has, what does the owner need to provide or decide?",
+            "If answering `message` requires information the owner must provide because it is missing from `property_context` and `thread`, what does the owner need to provide or decide?",
             OWNER_TOPIC,
           ),
           owner_urgent: noul(

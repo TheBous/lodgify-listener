@@ -1,11 +1,13 @@
 import type { IncomingGuestMessage } from "../domain/guest-message.js";
 import type { Result } from "../domain/result.js";
-import { decideNotification, type Triage } from "../domain/triage.js";
-import type { OwnerNotifier, TriagePort } from "./ports.js";
+import { decideNotification, type Triage, type TriageContext } from "../domain/triage.js";
+import type { OwnerNotifier, ThreadHistoryPort, TriagePort } from "./ports.js";
 
 export interface ProcessDependencies {
   triage: TriagePort;
   notifyOwner: OwnerNotifier;
+  threadHistory: ThreadHistoryPort;
+  propertyContext: string;
 }
 
 export type ProcessOutcome = { kind: "ignored" } | { kind: "notified" };
@@ -19,7 +21,17 @@ export type ProcessGuestMessage = (
 
 export function createMessageProcessor(dependencies: ProcessDependencies): ProcessGuestMessage {
   return async (message) => {
-    const triaged = await dependencies.triage(message);
+    const history = await dependencies.threadHistory(message.threadId);
+    if (!history.ok) {
+      // ponytail: degraded history still triages on the new message alone; add a retry queue if accuracy suffers
+      console.error(`[${message.bookingId}] thread history unavailable, triaging without it`);
+    }
+    const context: TriageContext = {
+      propertyContext: dependencies.propertyContext,
+      history: history.ok ? history.value : [],
+    };
+
+    const triaged = await dependencies.triage(message, context);
     if (!triaged.ok) return triaged;
     if (decideNotification(triaged.value).kind === "ignore") {
       return { ok: true, value: { kind: "ignored" } };

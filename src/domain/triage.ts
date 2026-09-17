@@ -1,8 +1,10 @@
+import type { ThreadMessage } from "./guest-message.js";
+
 export const CATEGORY = {
   answerable:
-    "A polite or factual reply is possible using only generic hospitality or info already contained in the conversation (greetings, thank-yous, confirming receipt).",
+    "A polite or factual reply is possible using generic hospitality, the owner-provided property info in `property_context`, or information already present in `thread` (e.g. the owner already answered the same question earlier in the conversation).",
   needs_owner:
-    "Answering requires information only the property owner has: check-in/check-out times, wifi or access codes, address details, house rules, amenities, extra services, pricing, repairs, or anything about the specific property.",
+    "Answering requires information that is NOT in `property_context` and NOT already in `thread`, and that only the property owner has: exceptions to check-in/check-out times, repairs, extra services to confirm, pricing decisions, or anything about the specific property still missing.",
   no_reply:
     "No guest reply is appropriate: spam, marketing, automated notifications, or a message that asks nothing and needs no response.",
 } as const;
@@ -21,6 +23,11 @@ export const OWNER_TOPIC = {
   other: "Owner input is needed but does not fit the other topics.",
 } as const;
 export type OwnerTopic = keyof typeof OWNER_TOPIC;
+
+export interface TriageContext {
+  propertyContext: string;
+  history: ThreadMessage[];
+}
 
 export interface Triage {
   category: Category;

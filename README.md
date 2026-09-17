@@ -8,16 +8,36 @@ Riceve i messaggi degli ospiti dal webhook di Lodgify, li classifica con [TypeSa
 Lodgify (guest_message_received)
         │  POST /webhook/lodgify
         ▼
-   server node:http ──► triage TypeSafe (1 chiamata, 3 domande in parallelo)
-        │                    • category:    answerable | needs_owner | no_reply
-        │                    • owner_topic: perché serve il proprietario (speculativa)
-        │                    • owner_urgent: urgenza (Noul, speculativa)
+   server node:http ──► storico thread da API Lodgify ─┐
+        │                                              ▼
+        │                              triage TypeSafe (1 chiamata, 3 domande in parallelo)
+        │                                              • category:    answerable | needs_owner | no_reply
+        │                                              • owner_topic: perché serve il proprietario (speculativa)
+        │                                              • owner_urgent: urgenza (Noul, speculativa)
         ▼
   category = needs_owner  ──►  messaggio Telegram al proprietario
   (o confidence < 0.5)         (dati booking + messaggio originale + topic/urgenza)
 ```
 
-- **answerable**: rispondibile con informazioni generiche (saluti, conferme) — v1: solo log
+## Contesto (senza database vettoriale)
+
+Il modello di triage giudica ogni messaggio con due fonti di contesto passate
+nello `state` della richiesta TypeSafe:
+
+1. **`data/property-context.md`** — conoscenza statica dell'immobile scritta dal
+   proprietario (wifi, orari check-in, accessi, regole, servizi, prezzi). Se la
+   risposta alla domanda dell'ospite è in questo file, il messaggio è
+   `answerable` e non arriva su Telegram. Modifica liberamente il file: viene
+   ricaricato a ogni avvio.
+2. **Storico della conversazione** — gli ultimi 20 messaggi del thread recuperati
+   da `GET /v2/messaging/{threadGuid}` (usa `LODGIFY_API_KEY`). Se il
+   proprietario ha già risposto alla stessa domanda nel thread, è `answerable`.
+
+Se lo storico non è disponibile il triage prosegue comunque col solo messaggio
+nuovo (degradazione graceful).
+
+- **answerable**: rispondibile con informazioni generiche, dal file di contesto
+  o dallo storico — v1: solo log
 - **needs_owner**: richiede informazioni che sa solo il proprietario (check-in anticipato, wifi, accessi, problemi, prezzi) — inviato a Telegram
 - **no_reply**: spam/notifiche automatizzate — ignorato
 
@@ -32,11 +52,12 @@ cp .env.example .env   # e compila le chiavi
 
 | Variabile | Descrizione |
 | --- | --- |
-| `LODGIFY_API_KEY` | API key Lodgify (Settings → API keys) |
+| `LODGIFY_API_KEY` | API key Lodgify (Settings → API keys), usata per lo storico thread |
 | `TYPESAFE_API_KEY` | API key TypeSafe (console.typesafe.ai) |
 | `TELEGRAM_BOT_TOKEN` | Token del bot (crealo con @BotFather) |
 | `TELEGRAM_CHAT_ID` | Chat id Telegram del proprietario |
 | `PORT` | Porta del server (default 3000) |
+| `PROPERTY_CONTEXT_PATH` | Percorso del file di contesto immobile (default `data/property-context.md`) |
 
 ## Run
 

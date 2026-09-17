@@ -5,6 +5,8 @@ export interface AppConfig {
   typesafeApiKey: string;
   telegramBotToken: string;
   telegramChatId: string;
+  lodgifyApiKey: string;
+  propertyContextPath: string;
 }
 
 export type ConfigError = { kind: "missing"; name: string } | { kind: "invalid-port" };
@@ -18,6 +20,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Result<AppConfig, ConfigErro
   if (!telegramBotToken.ok) return telegramBotToken;
   const telegramChatId = required(env, "TELEGRAM_CHAT_ID");
   if (!telegramChatId.ok) return telegramChatId;
+  const lodgifyApiKey = required(env, "LODGIFY_API_KEY");
+  if (!lodgifyApiKey.ok) return lodgifyApiKey;
   return {
     ok: true,
     value: {
@@ -25,6 +29,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Result<AppConfig, ConfigErro
       typesafeApiKey: typesafeApiKey.value,
       telegramBotToken: telegramBotToken.value,
       telegramChatId: telegramChatId.value,
+      lodgifyApiKey: lodgifyApiKey.value,
+      propertyContextPath: env.PROPERTY_CONTEXT_PATH ?? "data/property-context.md",
     },
   };
 }

@@ -5,3 +5,9 @@ export interface IncomingGuestMessage {
   subject: string | null;
   message: string;
 }
+
+export type ThreadMessage = {
+  from: "guest" | "owner";
+  text: string;
+  sentAt: string;
+};
