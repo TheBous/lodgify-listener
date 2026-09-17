@@ -19,7 +19,24 @@ export const OWNER_TOPIC = {
     "Guest reports something broken, dirty, missing, or malfunctioning in the property.",
   pricing_payment: "Guest asks about price, discounts, payment terms, deposit, or cancellation.",
   amenities_services:
-    "Guest asks about extra services or amenities the owner must confirm (crib, parking, cleaning, pets, latefood...).",
+    "Guest asks about extra services or amenities the owner must confirm (crib, parking, cleaning, pets, late food...).",
+  booking_changes:
+    "Guest wants to change dates, number of guests, extend the stay, or cancel the booking.",
+  registration_documents:
+    "Guest needs help with mandatory registration: identity documents, online check-in platform (e.g. Vikey), tourist tax, or legal stay requirements.",
+  cleaning_linens:
+    "Guest requests extra cleaning, fresh linens, towels, or consumables restocking during the stay.",
+  lost_and_found:
+    "Guest forgot personal items in the property and asks about recovering or having them shipped.",
+  noise_neighbors:
+    "Guests reports noise issues, neighbor complaints, or the owner must intervene on guest behavior.",
+  refund_compensation:
+    "Guest asks for a refund, partial discount, or compensation for an inconvenience during the stay.",
+  pets_request:
+    "Guest asks to bring pets and needs the owner's approval or pet-related arrangements.",
+  emergency_access:
+    "Guest is locked out, keys or codes do not work, or they cannot enter the property.",
+  capacity_visitors: "Guest asks about bringing more people than declared or having visitors.",
   other: "Owner input is needed but does not fit the other topics.",
 } as const;
 export type OwnerTopic = keyof typeof OWNER_TOPIC;
