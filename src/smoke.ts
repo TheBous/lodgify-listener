@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
+import type { Triage } from "./triage.js";
 
 process.env.TYPESAFE_API_KEY ??= "smoke-test";
 process.env.LODGIFY_API_KEY ??= "smoke-test";
@@ -9,7 +10,7 @@ process.env.TELEGRAM_CHAT_ID ??= "smoke-test";
 const { createApp } = await import("./server.js");
 const { shouldNotifyOwner } = await import("./triage.js");
 
-const triage = (category: string, confidence: number) => ({
+const triage = (category: Triage["category"], confidence: number): Triage => ({
   category,
   confidence,
   ownerTopic: "other",
@@ -36,7 +37,7 @@ assert.equal(
   ).status,
   200,
 );
-assert.equal((await fetch("http://localhost:" + port + "/nope", { method: "POST" })).status, 404);
+assert.equal((await fetch(`http://localhost:${port}/nope`, { method: "POST" })).status, 404);
 
 server.close();
 console.log("smoke ok");
