@@ -1,4 +1,5 @@
 import type { ThreadMessage } from "./guest-message.js";
+import type { PropertySections } from "./property-context.js";
 
 export const CATEGORY = {
   answerable:
@@ -43,6 +44,7 @@ export type OwnerTopic = keyof typeof OWNER_TOPIC;
 
 export interface TriageContext {
   propertyContext: string;
+  propertySections: PropertySections;
   history: ThreadMessage[];
 }
 
@@ -51,13 +53,17 @@ export interface Triage {
   confidence: number;
   ownerTopic: OwnerTopic;
   urgent: boolean;
+  /** Section of property_context that answers the guest, when category is answerable. */
+  answerSection: string | null;
 }
 
 export type NotificationDecision = { kind: "notify-owner" } | { kind: "ignore" };
 
 export function decideNotification(triage: Triage): NotificationDecision {
   if (triage.category === "needs_owner") return { kind: "notify-owner" };
-  if (triage.category === "answerable" && triage.confidence < 0.5) {
+  // Answerable but we could not draft a reply (uncertain or no matching section)
+  // -> the owner must answer himself.
+  if (triage.category === "answerable" && (triage.confidence < 0.5 || !triage.answerSection)) {
     return { kind: "notify-owner" };
   }
   return { kind: "ignore" };

@@ -30,6 +30,10 @@ export function createTypeSafeTriage(apiKey: string): TriagePort {
             "A guest of a vacation rental sent the message in `message`. Check `property_context` (info the owner wrote about the property) and the earlier messages in `thread` (which may already contain answers from the owner): if the information needed to reply is there, the message is answerable without the owner. Which category describes `message`?",
             CATEGORY,
           ),
+          answer_section: choice(
+            "If the full information needed to reply to `message` is contained in exactly one section of `property_context`, which section? If no single section fully answers the guest, choose none.",
+            sectionCriteria(context.propertySections),
+          ),
           owner_topic: choice(
             "If answering `message` requires information the owner must provide because it is missing from `property_context` and `thread`, what does the owner need to provide or decide?",
             OWNER_TOPIC,
@@ -45,6 +49,16 @@ export function createTypeSafeTriage(apiKey: string): TriagePort {
       return { ok: false, error: "triage-unavailable" };
     }
   };
+}
+
+function sectionCriteria(sections: Record<string, string>): Record<string, string> {
+  const criteria: Record<string, string> = {
+    none: "No section fully answers the guest's message.",
+  };
+  for (const [title, body] of Object.entries(sections)) {
+    criteria[title] = body.slice(0, 100);
+  }
+  return criteria;
 }
 
 function parseTriageResponse(input: unknown): Result<Triage, "invalid-triage-response"> {
@@ -64,8 +78,14 @@ function parseTriageResponse(input: unknown): Result<Triage, "invalid-triage-res
       confidence: category.confidence,
       ownerTopic,
       urgent,
+      answerSection: parseAnswerSection(input.answers.answer_section),
     },
   };
+}
+
+function parseAnswerSection(input: unknown): string | null {
+  if (!isRecord(input) || typeof input.choice !== "string") return null;
+  return input.choice === "none" ? null : input.choice;
 }
 
 function parseCategory(input: unknown): { value: Category; confidence: number } | null {

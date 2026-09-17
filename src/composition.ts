@@ -4,13 +4,16 @@ import { createTelegramNotifier } from "./adapters/telegram-notifier.js";
 import { createTypeSafeTriage } from "./adapters/typesafe-triage.js";
 import type { ProcessDependencies } from "./application/process-guest-message.js";
 import { type AppConfig, describeConfigError, loadConfig } from "./config.js";
+import { parsePropertySections } from "./domain/property-context.js";
 
 export function createDependencies(config: AppConfig): ProcessDependencies {
+  const propertyContext = loadPropertyContext(config.propertyContextPath);
   return {
     triage: createTypeSafeTriage(config.typesafeApiKey),
     notifyOwner: createTelegramNotifier(config.telegramBotToken, config.telegramChatId),
     threadHistory: createLodgifyThreadHistory(config.lodgifyApiKey),
-    propertyContext: loadPropertyContext(config.propertyContextPath),
+    propertyContext,
+    propertySections: parsePropertySections(propertyContext),
   };
 }
 
