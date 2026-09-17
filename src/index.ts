@@ -1,5 +1,6 @@
-export function main(): string {
-  return "lodgify-listener";
-}
+import { config } from "./config.js";
+import { createApp } from "./server.js";
 
-main();
+createApp().listen(config.port, () => {
+  console.log(`lodgify-listener listening on :${config.port}`);
+});
