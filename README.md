@@ -55,7 +55,7 @@ cp .env.example .env   # e compila le chiavi
 | `LODGIFY_API_KEY` | API key Lodgify (Settings → API keys), usata per lo storico thread |
 | `TYPESAFE_API_KEY` | API key TypeSafe (console.typesafe.ai) |
 | `TELEGRAM_BOT_TOKEN` | Token del bot (crealo con @BotFather) |
-| `TELEGRAM_CHAT_ID` | Chat id Telegram del proprietario |
+| `TELEGRAM_CHAT_ID` | Chat id Telegram del proprietario (più destinatari: separati da virgola) |
 | `PORT` | Porta del server (default 3000) |
 | `PROPERTY_CONTEXT_PATH` | Percorso del file di contesto immobile (default `data/property-context.md`) |
 
