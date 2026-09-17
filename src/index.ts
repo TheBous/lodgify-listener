@@ -1,6 +1,13 @@
-import { config } from "./config.js";
+import { createDependencies } from "./composition.js";
+import { describeConfigError, loadConfig } from "./config.js";
 import { createApp } from "./server.js";
 
-createApp().listen(config.port, () => {
-  console.log(`lodgify-listener listening on :${config.port}`);
-});
+const loaded = loadConfig(process.env);
+if (!loaded.ok) {
+  console.error(describeConfigError(loaded.error));
+  process.exitCode = 1;
+} else {
+  createApp(createDependencies(loaded.value)).listen(loaded.value.port, () => {
+    console.log(`lodgify-listener listening on :${loaded.value.port}`);
+  });
+}

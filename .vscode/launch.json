@@ -7,6 +7,7 @@
       "name": "Debug: build + run",
       "preLaunchTask": "build",
       "program": "${workspaceFolder}/dist/index.js",
+      "envFile": "${workspaceFolder}/.env",
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "skipFiles": ["<node_internals>/**"]
     },

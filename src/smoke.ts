@@ -1,14 +1,8 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
-import type { Triage } from "./triage.js";
-
-process.env.TYPESAFE_API_KEY ??= "smoke-test";
-process.env.LODGIFY_API_KEY ??= "smoke-test";
-process.env.TELEGRAM_BOT_TOKEN ??= "smoke-test";
-process.env.TELEGRAM_CHAT_ID ??= "smoke-test";
-
-const { createApp } = await import("./server.js");
-const { shouldNotifyOwner } = await import("./triage.js");
+import type { ProcessDependencies } from "./application/process-guest-message.js";
+import type { Triage } from "./domain/triage.js";
+import { createApp } from "./server.js";
 
 const triage = (category: Triage["category"], confidence: number): Triage => ({
   category,
@@ -16,12 +10,20 @@ const triage = (category: Triage["category"], confidence: number): Triage => ({
   ownerTopic: "other",
   urgent: false,
 });
-assert.equal(shouldNotifyOwner(triage("needs_owner", 0.99)), true);
-assert.equal(shouldNotifyOwner(triage("answerable", 0.9)), false);
-assert.equal(shouldNotifyOwner(triage("answerable", 0.3)), true);
-assert.equal(shouldNotifyOwner(triage("no_reply", 0.1)), false);
 
-const server = createApp();
+const calls: string[] = [];
+const dependencies: ProcessDependencies = {
+  triage: async (message) => ({
+    ok: true,
+    value: triage(message.message === "owner" ? "needs_owner" : "no_reply", 0.99),
+  }),
+  notifyOwner: async () => {
+    calls.push("notified");
+    return { ok: true, value: undefined };
+  },
+};
+
+const server = createApp(dependencies);
 await new Promise<void>((resolve) => server.listen(0, resolve));
 const port = (server.address() as AddressInfo).port;
 const url = `http://localhost:${port}/webhook/lodgify`;
@@ -37,6 +39,23 @@ assert.equal(
   ).status,
   200,
 );
+assert.equal(
+  (
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "guest_message_received",
+        thread_uid: "thread-1",
+        inbox_uid: "booking-1",
+        guest_name: "Guest",
+        message: "owner",
+      }),
+    })
+  ).status,
+  200,
+);
+assert.deepEqual(calls, ["notified"]);
 assert.equal((await fetch(`http://localhost:${port}/nope`, { method: "POST" })).status, 404);
 
 server.close();
