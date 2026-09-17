@@ -96,6 +96,30 @@ curl -X POST http://localhost:3000/webhook/lodgify -H "content-type: application
 
 Risposta attesa: `200 ok`, log `[B123] category=needs_owner ...` e notifica Telegram al proprietario.
 
+## Deploy (Cloudflare Workers, free tier)
+
+Lo stesso codice gira come Worker (`src/worker.ts`): niente server always-on,
+paghi zero request che non arrivano.
+
+```bash
+npx wrangler login
+npx wrangler secret put TYPESAFE_API_KEY
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_CHAT_ID
+npx wrangler secret put LODGIFY_API_KEY
+npx wrangler secret put PROPERTY_CONTEXT_MD   # incolla il contenuto di data/property-context.md
+npm run deploy
+```
+
+Webhook su Lodgify: `https://lodgify-listener.<tuo-subdomain>.workers.dev/webhook/lodgify`
+(evento *Guest message received*).
+
+Per provare il Worker in locale: `npm run dev:worker`.
+
+Nota: su Workers il contesto immobile vive nella variabile `PROPERTY_CONTEXT_MD`
+(multilinea ok). Se lo aggiorni, ricordati di allineare anche
+`data/property-context.md` (o viceversa) — in locale fa fede il file.
+
 ## Debug
 
 VS Code → F5 ("Debug: build + run"): compila, carica `.env` e lancia il server con breakpoint. Con il server già avviato via `node --inspect`, usa la config "Attach".
@@ -105,6 +129,8 @@ VS Code → F5 ("Debug: build + run"): compila, carica `.env` e lancia il server
 | Script | Cosa fa |
 | --- | --- |
 | `npm run dev` | build + watch del server con `.env` |
+| `npm run dev:worker` | Worker in locale con wrangler |
+| `npm run deploy` | deploy su Cloudflare Workers |
 | `npm run smoke` | test di wiring senza API key |
 | `npm run lint` / `lint:fix` | Biome check / fix |
 | `npm run typecheck` | `tsc --noEmit` |

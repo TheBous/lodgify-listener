@@ -69,7 +69,7 @@ function parsePayload(body: string): Result<unknown, "invalid-json"> {
   }
 }
 
-function parseGuestMessage(input: unknown): Result<IncomingGuestMessage, "invalid-webhook"> {
+export function parseGuestMessage(input: unknown): Result<IncomingGuestMessage, "invalid-webhook"> {
   if (!isRecord(input) || input.action !== "guest_message_received") {
     return { ok: false, error: "invalid-webhook" };
   }
