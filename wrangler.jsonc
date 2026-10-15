@@ -4,7 +4,16 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-01-15",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AUTO_REPLY_ENABLED": "false",
+    "OPENAI_MODEL": "gpt-6-luna"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "CONVERSATIONS", "class_name": "Conversation" }]
+  },
+  "migrations": [{ "tag": "v1-conversations", "new_sqlite_classes": ["Conversation"] }],
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "redact_query_string": true
   }
 }

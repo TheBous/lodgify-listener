@@ -1,137 +1,73 @@
 # lodgify-listener
 
-Riceve i messaggi degli ospiti dal webhook di Lodgify, li classifica con [TypeSafe](https://docs.typesafe.ai) e, se serve una risposta che solo il proprietario dell'appartamento può dare, invia la notifica su Telegram.
+Risponditore per gli ospiti Lodgify su Cloudflare Workers, con risposte generate
+tramite OpenAI e notifiche Telegram. Il manuale di ogni alloggio viene associato
+al suo `property_id`: nessuna informazione di Cadelasco e nessuna apertura Vikey.
 
-## Come funziona
+Il Worker parte in **modalità anteprima**: genera la risposta e la manda su
+Telegram, senza inviarla all'ospite.
 
-```
-Lodgify (guest_message_received)
-        │  POST /webhook/lodgify
-        ▼
-   server node:http ──► storico thread da API Lodgify ─┐
-        │                                              ▼
-        │                              triage TypeSafe (1 chiamata, 3 domande in parallelo)
-        │                                              • category:    answerable | needs_owner | no_reply
-        │                                              • owner_topic: perché serve il proprietario (speculativa)
-        │                                              • owner_urgent: urgenza (Noul, speculativa)
-        ▼
-  category = needs_owner  ──►  messaggio Telegram al proprietario
-  (o confidence < 0.5)         (dati booking + messaggio originale + topic/urgenza)
-```
+## Flusso
 
-## Contesto (senza database vettoriale)
+1. Riceve e autentica `guest_message_received` su `/webhook/lodgify`.
+2. Un Durable Object per thread registra l'ID del messaggio e aspetta 15 secondi
+   dall'ultimo arrivo, raggruppando i messaggi consecutivi.
+3. Recupera prenotazione e ultimi 20 messaggi da Lodgify. Risponde solo a prenotazioni
+   `Booked`, associate allo stesso thread, con un manuale configurato.
+4. OpenAI produce una risposta nella lingua dell'ospite e sceglie:
+   - `no`: risponde e resta attivo;
+   - `notifica`: risponde, avvisa Telegram e resta attivo;
+   - `umano`: invia una cortesia, avvisa Telegram e sospende le risposte;
+   - `ignore`: nessuna risposta a spam/notifiche.
+5. Prima dell'invio rilegge il contesto: se è cambiato, sospende la risposta.
+   I messaggi successivi di un thread sospeso vengono segnalati su Telegram.
 
-Il modello di triage giudica ogni messaggio con due fonti di contesto passate
-nello `state` della richiesta TypeSafe:
+Per la configurazione completa, la prova su una prenotazione di test e la gestione
+degli errori, leggi [la guida operativa](docs/auto-reply.md).
 
-1. **`data/property-context.md`** — conoscenza statica dell'immobile scritta dal
-   proprietario (wifi, orari check-in, accessi, regole, servizi, prezzi). Se la
-   risposta alla domanda dell'ospite è in questo file, il messaggio è
-   `answerable` e non arriva su Telegram. Modifica liberamente il file: viene
-   ricaricato a ogni avvio.
-2. **Storico della conversazione** — gli ultimi 20 messaggi del thread recuperati
-   da `GET /v2/messaging/{threadGuid}` (usa `LODGIFY_API_KEY`). Se il
-   proprietario ha già risposto alla stessa domanda nel thread, è `answerable`.
-
-Se lo storico non è disponibile il triage prosegue comunque col solo messaggio
-nuovo (degradazione graceful).
-
-- **answerable**: rispondibile con informazioni generiche, dal file di contesto
-  o dallo storico — v1: solo log
-- **needs_owner**: richiede informazioni che sa solo il proprietario (check-in anticipato, wifi, accessi, problemi, prezzi) — inviato a Telegram
-- **no_reply**: spam/notifiche automatizzate — ignorato
-
-La v1 **non** risponde automaticamente agli ospiti: fa solo triage.
-
-## Setup
+## Avvio locale del Worker
 
 ```bash
 npm install
-cp .env.example .env   # e compila le chiavi
+cp .dev.vars.example .dev.vars
+# Compila chiavi, token e manuali in .dev.vars.
+npm run dev:worker
 ```
 
-| Variabile | Descrizione |
-| --- | --- |
-| `LODGIFY_API_KEY` | API key Lodgify (Settings → API keys), usata per lo storico thread |
-| `TYPESAFE_API_KEY` | API key TypeSafe (console.typesafe.ai) |
-| `TELEGRAM_BOT_TOKEN` | Token del bot (crealo con @BotFather) |
-| `TELEGRAM_CHAT_ID` | Chat id Telegram del proprietario (più destinatari: separati da virgola) |
-| `PORT` | Porta del server (default 3000) |
-| `PROPERTY_CONTEXT_PATH` | Percorso del file di contesto immobile (default `data/property-context.md`) |
+Per esporlo a Lodgify in sviluppo usa un tunnel HTTPS verso la porta di Wrangler.
+URL webhook: `https://<host>/webhook/lodgify?token=<WEBHOOK_TOKEN>`.
 
-## Run
+## Verifica senza servizi reali
 
 ```bash
-npm run dev
-```
-
-Per ricevere i webhook in locale serve un URL pubblico, ad esempio:
-
-```bash
-cloudflared tunnel --url http://localhost:3000
-```
-
-Poi registra `https://<tunnel-url>/webhook/lodgify` su Lodgify come webhook per l'evento *Guest message received*.
-
-## Test
-
-Smoke test (no chiavi API richieste: copre il gate di routing e il wiring del server):
-
-```bash
+npm run typecheck
+npm run lint
+npm run test
+npm run test:worker
 npm run smoke
 ```
 
-Simulare un messaggio ospite (usa le chiavi reali: fa una chiamata TypeSafe e, se classificato `needs_owner`, manda davvero il messaggio Telegram):
+`test:worker` crea un bundle con `wrangler deploy --dry-run` e lo esegue in
+Miniflare/workerd: storage SQLite, riavvio del Durable Object, deduplicazione,
+attesa reale, aggregazione e controlli amministrativi. Le API esterne sono simulate.
+Non effettua un deploy né invia messaggi reali.
 
-```bash
-curl -X POST http://localhost:3000/webhook/lodgify -H "content-type: application/json" -d '{
-  "action": "guest_message_received",
-  "thread_uid": "t-1",
-  "inbox_uid": "B123",
-  "guest_name": "Mario Rossi",
-  "subject": null,
-  "message": "Hi! Can we check in at 10am tomorrow? And what is the wifi password?"
-}'
-```
+## Deploy
 
-Risposta attesa: `200 ok`, log `[B123] category=needs_owner ...` e notifica Telegram al proprietario.
-
-## Deploy (Cloudflare Workers, free tier)
-
-Lo stesso codice gira come Worker (`src/worker.ts`): niente server always-on,
-paghi zero request che non arrivano.
+Configura i secret descritti nella [guida](docs/auto-reply.md), poi:
 
 ```bash
 npx wrangler login
-npx wrangler secret put TYPESAFE_API_KEY
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_CHAT_ID
-npx wrangler secret put LODGIFY_API_KEY
-npx wrangler secret put PROPERTY_CONTEXT_MD   # incolla il contenuto di data/property-context.md
 npm run deploy
 ```
 
-Webhook su Lodgify: `https://lodgify-listener.<tuo-subdomain>.workers.dev/webhook/lodgify`
-(evento *Guest message received*).
+`wrangler.jsonc` contiene binding e migrazione SQLite dei Durable Objects.
+`AUTO_REPLY_ENABLED` è `false`: mantienilo così durante la prima verifica.
+Dopo la prova di consegna puoi impostarlo a `true` e ridistribuire.
 
-Per provare il Worker in locale: `npm run dev:worker`.
+## Server Node precedente
 
-Nota: su Workers il contesto immobile vive nella variabile `PROPERTY_CONTEXT_MD`
-(multilinea ok). Se lo aggiorni, ricordati di allineare anche
-`data/property-context.md` (o viceversa) — in locale fa fede il file.
-
-## Debug
-
-VS Code → F5 ("Debug: build + run"): compila, carica `.env` e lancia il server con breakpoint. Con il server già avviato via `node --inspect`, usa la config "Attach".
-
-## Script
-
-| Script | Cosa fa |
-| --- | --- |
-| `npm run dev` | build + watch del server con `.env` |
-| `npm run dev:worker` | Worker in locale con wrangler |
-| `npm run deploy` | deploy su Cloudflare Workers |
-| `npm run smoke` | test di wiring senza API key |
-| `npm run lint` / `lint:fix` | Biome check / fix |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run release` | bump versione + CHANGELOG + tag dai commit convenzionali |
+`npm run dev` mantiene il precedente flusso locale di triage TypeSafe, configurato
+tramite `.env.example`. Legge `data/property-context.md`, recupera lo storico e
+invia notifiche/bozze su Telegram; non risponde agli ospiti. Non usa i Durable Objects.
+Per provare il nuovo risponditore usa `npm run dev:worker`.
