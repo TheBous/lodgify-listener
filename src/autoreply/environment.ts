@@ -11,6 +11,8 @@ export interface WorkerEnv {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
   WEBHOOK_TOKEN: string;
+  /** Secret returned once from POST /webhooks/v1/subscribe; verifies ms-signature from Lodgify. */
+  LODGIFY_WEBHOOK_SECRET?: string;
   ADMIN_TOKEN: string;
   PROPERTY_CONTEXTS_JSON: string;
   AUTO_REPLY_ENABLED?: string;
@@ -23,6 +25,7 @@ const configSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_CHAT_ID: z.string().min(1),
   WEBHOOK_TOKEN: z.string().min(32),
+  LODGIFY_WEBHOOK_SECRET: z.string().min(16).optional(),
   ADMIN_TOKEN: z.string().min(32),
   PROPERTY_CONTEXTS_JSON: z
     .string()

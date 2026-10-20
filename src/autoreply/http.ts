@@ -2,6 +2,11 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { webhookSchema } from "./contracts.js";
 import { parseWorkerConfig, type WorkerEnv } from "./environment.js";
+import {
+  extractWebhookToken,
+  msSignatureHeader,
+  webhookAuthorized,
+} from "./lodgify-webhook-auth.js";
 
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
@@ -14,23 +19,34 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     return new Response("worker not configured", { status: 503 });
   if (admin) return handleAdmin(request, env, admin);
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
-  const token =
-    url.searchParams.get("token") ?? request.headers.get("authorization")?.replace(/^Bearer /, "");
-  if (!authorized(token, env.WEBHOOK_TOKEN)) return new Response("unauthorized", { status: 401 });
-  return handleWebhook(request, env);
+  const body = await readRawBody(request);
+  if (!body.ok) return new Response(body.error, { status: body.status });
+  const config = parseWorkerConfig(env);
+  if (!config.success) return new Response("worker not configured", { status: 503 });
+  const allowed = await webhookAuthorized({
+    token: extractWebhookToken(request, url),
+    webhookToken: config.data.WEBHOOK_TOKEN,
+    lodgifySecret: config.data.LODGIFY_WEBHOOK_SECRET,
+    rawBody: body.raw,
+    msSignature: msSignatureHeader(request),
+  });
+  if (!allowed) return new Response("unauthorized", { status: 401 });
+  return handleWebhookBody(body.raw, body.value, env);
 }
 
-async function handleWebhook(request: Request, env: WorkerEnv): Promise<Response> {
-  const body = await readJson(request);
-  if (!body.ok) return new Response(body.error, { status: body.status });
-  const action = z.object({ action: z.string() }).safeParse(body.value);
+async function handleWebhookBody(
+  rawBody: string,
+  parsed: unknown,
+  env: WorkerEnv,
+): Promise<Response> {
+  const action = z.object({ action: z.string() }).safeParse(parsed);
   if (action.success && action.data.action !== "guest_message_received")
     return new Response("ignored");
-  const event = webhookSchema.safeParse(body.value);
+  const event = webhookSchema.safeParse(parsed);
   if (!event.success) return new Response("invalid webhook", { status: 400 });
   return env.CONVERSATIONS.get(env.CONVERSATIONS.idFromName(event.data.threadId)).fetch(
     "https://conversation/event",
-    { method: "POST", body: JSON.stringify(body.value) },
+    { method: "POST", body: rawBody },
   );
 }
 
@@ -60,9 +76,11 @@ function authorized(actual: string | null | undefined, expected: string): boolea
   return provided.length === wanted.length && timingSafeEqual(provided, wanted);
 }
 
-async function readJson(
+async function readRawBody(
   request: Request,
-): Promise<{ ok: true; value: unknown } | { ok: false; error: string; status: number }> {
+): Promise<
+  { ok: true; raw: string; value: unknown } | { ok: false; error: string; status: number }
+> {
   if (!request.body) return { ok: false, error: "empty body", status: 400 };
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -78,7 +96,8 @@ async function readJson(
       }
       chunks.push(chunk.value);
     }
-    return { ok: true, value: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
+    const raw = Buffer.concat(chunks).toString("utf8");
+    return { ok: true, raw, value: JSON.parse(raw) };
   } catch {
     return { ok: false, error: "invalid body", status: 400 };
   }

@@ -19,7 +19,7 @@
     "smoke": "npm run build --silent && node dist/smoke.js",
     "release": "release-it",
     "prepare": "husky",
-    "test": "npm run build --silent && node --test dist/autoreply/state.test.js dist/autoreply/processing.test.js dist/autoreply/delivery.test.js dist/autoreply/adapters.test.js",
+    "test": "npm run build --silent && node --test dist/autoreply/state.test.js dist/autoreply/processing.test.js dist/autoreply/delivery.test.js dist/autoreply/adapters.test.js dist/autoreply/lodgify-webhook-auth.test.js",
     "test:worker": "npm run build --silent && wrangler deploy --dry-run --outdir .worker-test && node --test dist/autoreply/worker.test.js"
   },
   "lint-staged": {

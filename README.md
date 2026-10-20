@@ -35,7 +35,8 @@ npm run dev:worker
 ```
 
 Per esporlo a Lodgify in sviluppo usa un tunnel HTTPS verso la porta di Wrangler.
-URL webhook: `https://<host>/webhook/lodgify?token=<WEBHOOK_TOKEN>`.
+URL webhook Lodgify: `https://<host>/webhook/lodgify` (firma `ms-signature` con
+`LODGIFY_WEBHOOK_SECRET`). Per curl manuali: `?token=<WEBHOOK_TOKEN>`.
 
 ## Verifica senza servizi reali
 

@@ -4,6 +4,8 @@ OPENAI_API_KEY=""
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHAT_ID=""
 WEBHOOK_TOKEN="genera-un-token-casuale-di-almeno-32-caratteri"
+# Secret dalla risposta 201 di POST /webhooks/v1/subscribe (firma ms-signature).
+LODGIFY_WEBHOOK_SECRET=""
 ADMIN_TOKEN="genera-un-altro-token-casuale-di-almeno-32-caratteri"
 # Sostituisci 42 con il vero property_id Lodgify e inserisci il manuale completo.
 PROPERTY_CONTEXTS_JSON='{"744245":"Check-in: dalle 16:00.\nCheck-out: entro le 10:00."}'

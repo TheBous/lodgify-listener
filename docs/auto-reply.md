@@ -20,7 +20,8 @@ Il riferimento dei cambiamenti è il commit `78b31a266309ebd9a454e1edd7014477187
 | `OPENAI_API_KEY` | Generazione della risposta |
 | `TELEGRAM_BOT_TOKEN` | Bot per le notifiche |
 | `TELEGRAM_CHAT_ID` | Uno o più chat ID separati da virgola |
-| `WEBHOOK_TOKEN` | Token casuale di almeno 32 caratteri per Lodgify |
+| `WEBHOOK_TOKEN` | Token casuale di almeno 32 caratteri per prove manuali (`?token=` o Bearer) |
+| `LODGIFY_WEBHOOK_SECRET` | Secret restituito **una sola volta** da `POST /webhooks/v1/subscribe`; verifica l’header `ms-signature` |
 | `ADMIN_TOKEN` | Un altro token casuale di almeno 32 caratteri per i controlli |
 | `PROPERTY_CONTEXTS_JSON` | Oggetto JSON: property ID → manuale markdown |
 | `OPENAI_MODEL` | Default in Wrangler: `gpt-6-luna` |
@@ -39,6 +40,7 @@ npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 npx wrangler secret put WEBHOOK_TOKEN
+npx wrangler secret put LODGIFY_WEBHOOK_SECRET
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put PROPERTY_CONTEXTS_JSON
 ```
@@ -66,11 +68,14 @@ riutilizza esplicitamente lo stesso contenuto. Non esiste un manuale di fallback
 Registra su Lodgify l'evento **Guest message received** con questo URL:
 
 ```text
-https://lodgify-listener.<subdomain>.workers.dev/webhook/lodgify?token=<WEBHOOK_TOKEN>
+https://lodgify-listener.<subdomain>.workers.dev/webhook/lodgify
 ```
 
-È supportato anche `Authorization: Bearer <WEBHOOK_TOKEN>` per client che possono
-impostare header. I controlli amministrativi richiedono sempre il Bearer token.
+Lodgify **non** invia il `WEBHOOK_TOKEN`: firma ogni POST con `ms-signature: sha256=…`
+(HMAC-SHA256 del body JSON con il `secret` della subscription). Imposta
+`LODGIFY_WEBHOOK_SECRET` con quel valore. Per test manuali restano validi
+`?token=<WEBHOOK_TOKEN>` o `Authorization: Bearer <WEBHOOK_TOKEN>`.
+I controlli amministrativi richiedono sempre il Bearer `ADMIN_TOKEN`.
 Una configurazione incompleta restituisce 503; token errato 401; payload invalido 400.
 Il payload deve contenere i campi ufficiali `message_id`, `thread_uid`, `inbox_uid`,
 `creation_time` e il testo/indicatore allegati. La risposta 202 significa accodato.
