@@ -7,6 +7,8 @@ Non sostituisce dati della prenotazione corrente né messaggi già nel thread.
 
 **Domanda tipo:** Problemi con acqua calda, riscaldamento o prese elettriche: cosa facciamo?
 
+
+
 Segnalare subito il guasto in chat (presa, ventola, acqua calda, riscaldamento). L’host coordina un tecnico quando necessario e propone una fascia oraria; l’intervento può avvenire durante il soggiorno o dopo il check-out, in base a cosa preferisce l’ospite. Non promettere tempi certi finché l’elettricista/idraulico non conferma. Nel frattempo indicare eventuali accorgimenti sicuri già comunicati in casi simili (es. staccare un elettrodomestico rumoroso di notte).
 
 ## FAQ — Vikey è affidabile? Posso inviare i documenti in modo sicuro
