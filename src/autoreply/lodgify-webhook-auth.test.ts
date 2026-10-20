@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 import {
   extractWebhookToken,
@@ -6,28 +7,24 @@ import {
   webhookAuthorized,
 } from "./lodgify-webhook-auth.js";
 
-test("verifyLodgifyWebhookSignature accepts documented HMAC format", async () => {
+test("verifyLodgifyWebhookSignature accepts documented HMAC format", () => {
   const body = '{"action":"guest_message_received","message":"hi"}';
   const secret = "lodgify-endpoint-secret";
-  const valid = await verifyLodgifyWebhookSignature(
-    secret,
-    body,
-    `sha256=${await sign(secret, body)}`,
-  );
+  const valid = verifyLodgifyWebhookSignature(secret, body, `sha256=${sign(secret, body)}`);
   assert.equal(valid, true);
-  assert.equal(await verifyLodgifyWebhookSignature(secret, body, "sha256=deadbeef"), false);
+  assert.equal(verifyLodgifyWebhookSignature(secret, body, "sha256=deadbeef"), false);
   assert.equal(
-    await verifyLodgifyWebhookSignature(secret, `${body} `, `sha256=${await sign(secret, body)}`),
+    verifyLodgifyWebhookSignature(secret, `${body} `, `sha256=${sign(secret, body)}`),
     false,
   );
 });
 
-test("webhookAuthorized prefers shared token but accepts ms-signature", async () => {
+test("webhookAuthorized prefers shared token but accepts ms-signature", () => {
   const body = '{"ok":true}';
   const secret = "endpoint-secret-from-subscribe";
-  const header = `sha256=${await sign(secret, body)}`;
+  const header = `sha256=${sign(secret, body)}`;
   assert.equal(
-    await webhookAuthorized({
+    webhookAuthorized({
       token: "test-secret-which-is-at-least-32-characters",
       webhookToken: "test-secret-which-is-at-least-32-characters",
       lodgifySecret: secret,
@@ -37,7 +34,7 @@ test("webhookAuthorized prefers shared token but accepts ms-signature", async ()
     true,
   );
   assert.equal(
-    await webhookAuthorized({
+    webhookAuthorized({
       token: null,
       webhookToken: "test-secret-which-is-at-least-32-characters",
       lodgifySecret: secret,
@@ -47,7 +44,7 @@ test("webhookAuthorized prefers shared token but accepts ms-signature", async ()
     true,
   );
   assert.equal(
-    await webhookAuthorized({
+    webhookAuthorized({
       token: null,
       webhookToken: "test-secret-which-is-at-least-32-characters",
       lodgifySecret: undefined,
@@ -71,17 +68,6 @@ test("extractWebhookToken reads query or bearer", () => {
   );
 });
 
-async function sign(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
-  return [...new Uint8Array(signature)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
+function sign(secret: string, message: string): string {
+  return createHmac("sha256", secret).update(message, "utf8").digest("hex").toUpperCase();
 }

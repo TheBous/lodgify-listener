@@ -5,6 +5,7 @@ import { parseWorkerConfig, type WorkerEnv } from "./environment.js";
 import {
   extractWebhookToken,
   msSignatureHeader,
+  webhookAuthDebug,
   webhookAuthorized,
 } from "./lodgify-webhook-auth.js";
 
@@ -23,14 +24,26 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   if (!body.ok) return new Response(body.error, { status: body.status });
   const config = parseWorkerConfig(env);
   if (!config.success) return new Response("worker not configured", { status: 503 });
-  const allowed = await webhookAuthorized({
-    token: extractWebhookToken(request, url),
+  const token = extractWebhookToken(request, url);
+  const msSignature = msSignatureHeader(request);
+  const allowed = webhookAuthorized({
+    token,
     webhookToken: config.data.WEBHOOK_TOKEN,
     lodgifySecret: config.data.LODGIFY_WEBHOOK_SECRET,
     rawBody: body.raw,
-    msSignature: msSignatureHeader(request),
+    msSignature,
   });
-  if (!allowed) return new Response("unauthorized", { status: 401 });
+  if (!allowed) {
+    console.warn(
+      `[webhook] 401 ${webhookAuthDebug({
+        token,
+        webhookToken: config.data.WEBHOOK_TOKEN,
+        lodgifySecret: config.data.LODGIFY_WEBHOOK_SECRET,
+        msSignature,
+      })}`,
+    );
+    return new Response("unauthorized", { status: 401 });
+  }
   return handleWebhookBody(body.raw, body.value, env);
 }
 

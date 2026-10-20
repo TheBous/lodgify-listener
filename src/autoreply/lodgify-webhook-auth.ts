@@ -1,16 +1,16 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const SIGNATURE_HEADER = "ms-signature";
 
-export async function verifyLodgifyWebhookSignature(
+export function verifyLodgifyWebhookSignature(
   secret: string,
   rawBody: string,
   signatureHeader: string | null,
-): Promise<boolean> {
+): boolean {
   if (!signatureHeader?.trim()) return false;
   const provided = parseMsSignature(signatureHeader);
   if (!provided) return false;
-  const expected = await hmacSha256Hex(secret, rawBody);
+  const expected = hmacSha256Hex(secret.trim(), rawBody);
   const left = Buffer.from(provided);
   const right = Buffer.from(expected);
   if (left.length !== right.length) return false;
@@ -23,12 +23,14 @@ export function webhookAuthorized(options: {
   lodgifySecret: string | undefined;
   rawBody: string;
   msSignature: string | null;
-}): Promise<boolean> {
-  if (authorizedToken(options.token, options.webhookToken)) {
-    return Promise.resolve(true);
-  }
-  if (!options.lodgifySecret?.trim()) return Promise.resolve(false);
-  return verifyLodgifyWebhookSignature(options.lodgifySecret, options.rawBody, options.msSignature);
+}): boolean {
+  if (authorizedToken(options.token, options.webhookToken)) return true;
+  if (!options.lodgifySecret?.trim()) return false;
+  return verifyLodgifyWebhookSignature(
+    options.lodgifySecret.trim(),
+    options.rawBody,
+    options.msSignature,
+  );
 }
 
 export function extractWebhookToken(request: Request, url: URL): string | null {
@@ -56,17 +58,23 @@ function parseMsSignature(header: string): string | null {
   return match[1].trim().toUpperCase();
 }
 
-async function hmacSha256Hex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
-  return [...new Uint8Array(signature)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
+function hmacSha256Hex(secret: string, message: string): string {
+  return createHmac("sha256", secret).update(message, "utf8").digest("hex").toUpperCase();
+}
+
+/** Safe diagnostics for Cloudflare logs (no secrets or body). */
+export function webhookAuthDebug(options: {
+  token: string | null | undefined;
+  webhookToken: string;
+  lodgifySecret: string | undefined;
+  msSignature: string | null;
+}): string {
+  const hasToken = Boolean(options.token?.length);
+  const hasSecret = Boolean(options.lodgifySecret?.trim());
+  const hasSig = Boolean(options.msSignature?.trim());
+  if (hasToken) return "token_mismatch";
+  if (!hasSecret && hasSig) return "missing_lodgify_webhook_secret";
+  if (hasSecret && hasSig) return "signature_mismatch";
+  if (!hasSecret && !hasSig) return "missing_token_and_secret";
+  return "unauthorized";
 }
