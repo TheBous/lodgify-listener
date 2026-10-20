@@ -50,8 +50,11 @@ Worker tramite `observability.redact_query_string`.
 Per creare il JSON del manuale esistente, sostituisci `PROPERTY_ID_REALE` nel comando:
 
 ```bash
-node --input-type=module -e 'import {readFileSync,writeFileSync} from "node:fs"; writeFileSync("/tmp/lodgify-contexts.json", JSON.stringify({[process.argv[1]]:readFileSync("data/property-context.md","utf8")}));' 744245
+node scripts/build-property-contexts-json.mjs 744245 /tmp/lodgify-contexts.json
 ```
+
+Il manuale include `data/property-context.md` e `data/host-faq-context.md` (FAQ
+operativa generata da `scripts/export-finetuning-context-csv.py`).
 
 Passa il contenuto di `/tmp/lodgify-contexts.json` al secret `PROPERTY_CONTEXTS_JSON`.
 Per più alloggi aggiungi una voce per ogni ID. Se più alloggi condividono il manuale,

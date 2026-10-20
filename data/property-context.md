@@ -1,8 +1,9 @@
 # Contesto immobile
 
-Tutto quello che scrivi in questo file viene dato al modello di triage: se la
-risposta alla domanda dell'ospite è qui, il messaggio viene classificato come
-`answerable` e NON ti viene inviato su Telegram. Tienilo aggiornato.
+Tutto quello che scrivi in questo file (più `data/host-faq-context.md`, uniti
+automaticamente) viene dato al modello di triage e al risponditore automatico:
+se la risposta alla domanda dell'ospite è nel contesto, il messaggio può essere
+`answerable` senza passare da Telegram. Tienilo aggiornato.
 
 ## Indirizzo e accessi
 

@@ -4,10 +4,13 @@ import { createTelegramNotifier } from "./adapters/telegram-notifier.js";
 import { createTypeSafeTriage } from "./adapters/typesafe-triage.js";
 import type { ProcessDependencies } from "./application/process-guest-message.js";
 import { type AppConfig, describeConfigError, loadConfig } from "./config.js";
-import { parsePropertySections } from "./domain/property-context.js";
+import { mergePropertyContextMarkdown, parsePropertySections } from "./domain/property-context.js";
 
 export function createDependencies(config: AppConfig): ProcessDependencies {
-  const propertyContext = loadPropertyContext(config.propertyContextPath);
+  const propertyContext = loadPropertyContext(
+    config.propertyContextPath,
+    config.hostFaqContextPath,
+  );
   return {
     triage: createTypeSafeTriage(config.typesafeApiKey),
     notifyOwner: createTelegramNotifier(config.telegramBotToken, config.telegramChatId),
@@ -17,11 +20,17 @@ export function createDependencies(config: AppConfig): ProcessDependencies {
   };
 }
 
-function loadPropertyContext(path: string): string {
+function loadPropertyContext(basePath: string, faqPath: string): string {
+  const base = readOptionalMarkdown(basePath, "Property context");
+  const faq = readOptionalMarkdown(faqPath, "Host FAQ context");
+  return mergePropertyContextMarkdown(base, faq);
+}
+
+function readOptionalMarkdown(path: string, label: string): string {
   try {
     return readFileSync(path, "utf8");
   } catch {
-    console.error(`Property context file not found at ${path}, triaging without it`);
+    console.error(`${label} file not found at ${path}, continuing without it`);
     return "";
   }
 }

@@ -1,5 +1,13 @@
 export type PropertySections = Record<string, string>;
 
+/** Appends FAQ / playbook markdown to the base property manual (used by triage and autoreply). */
+export function mergePropertyContextMarkdown(base: string, appendix: string): string {
+  const extra = appendix.trim();
+  if (!extra) return base;
+  if (!base.trim()) return extra;
+  return `${base.trimEnd()}\n\n${extra}\n`;
+}
+
 export function parsePropertySections(markdown: string): PropertySections {
   const sections: PropertySections = {};
   let current: { title: string; body: string[] } | null = null;

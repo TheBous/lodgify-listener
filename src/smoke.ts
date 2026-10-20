@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import type { ProcessDependencies } from "./application/process-guest-message.js";
-import { parsePropertySections } from "./domain/property-context.js";
+import { mergePropertyContextMarkdown, parsePropertySections } from "./domain/property-context.js";
 import type { Triage, TriageContext } from "./domain/triage.js";
 import { createApp } from "./server.js";
 
@@ -47,6 +47,10 @@ const dependencies: ProcessDependencies = {
   propertySections: parsePropertySections(PROPERTY_MD),
 };
 
+assert.equal(
+  mergePropertyContextMarkdown("## Base\nfatti", "## FAQ\npolicy"),
+  "## Base\nfatti\n\n## FAQ\npolicy\n",
+);
 assert.deepEqual(parsePropertySections("# t\n## A\nbody a\n## B\nbody b"), {
   A: "body a",
   B: "body b",

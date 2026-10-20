@@ -7,6 +7,7 @@ export interface AppConfig {
   telegramChatId: string;
   lodgifyApiKey: string;
   propertyContextPath: string;
+  hostFaqContextPath: string;
 }
 
 export type ConfigError = { kind: "missing"; name: string } | { kind: "invalid-port" };
@@ -31,6 +32,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Result<AppConfig, ConfigErro
       telegramChatId: telegramChatId.value,
       lodgifyApiKey: lodgifyApiKey.value,
       propertyContextPath: env.PROPERTY_CONTEXT_PATH ?? "data/property-context.md",
+      hostFaqContextPath: env.HOST_FAQ_CONTEXT_PATH ?? "data/host-faq-context.md",
     },
   };
 }
