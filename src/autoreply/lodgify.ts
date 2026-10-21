@@ -14,23 +14,22 @@ const bookingSchema = z.object({
   departure: z.iso.date(),
   is_deleted: z.boolean(),
 });
-const threadSchema = z.array(
-  z.object({
-    thread_uid: z.uuid(),
-    is_closed: z.boolean(),
-    messages: z
-      .array(
-        z.object({
-          type: z.enum(["Owner", "Renter", "Comment"]),
-          message: z.string().nullable(),
-          date_created: z.iso.datetime({ offset: true }),
-          message_id: z.uuid().nullable().optional(),
-          message_status: z.string().nullable().optional(),
-        }),
-      )
-      .nullable(),
-  }),
-);
+const threadItemSchema = z.object({
+  thread_uid: z.uuid(),
+  is_closed: z.boolean(),
+  messages: z
+    .array(
+      z.object({
+        type: z.enum(["Owner", "Renter", "Comment"]),
+        message: z.string().nullable(),
+        date_created: z.iso.datetime({ offset: true, local: true }),
+        message_id: z.guid().nullable().optional(),
+        message_status: z.string().nullable().optional(),
+      }),
+    )
+    .nullable(),
+});
+const threadSchema = z.union([threadItemSchema, z.array(threadItemSchema)]);
 
 export function createLodgifyMessaging(
   apiKey: string,
@@ -95,7 +94,8 @@ export function createLodgifyMessaging(
         });
         throw new Error("Lodgify thread response failed schema validation");
       }
-      const thread = parsedThread.data.find((item) => item.thread_uid === event.threadId);
+      const threads = Array.isArray(parsedThread.data) ? parsedThread.data : [parsedThread.data];
+      const thread = threads.find((item) => item.thread_uid === event.threadId);
       if (!thread || thread.is_closed || !thread.messages) {
         logDiagnostic("warn", "lodgify_thread_unavailable", {
           threadId: event.threadId,

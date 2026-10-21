@@ -44,6 +44,51 @@ test("rate limited reads name the endpoint and Retry-After", async (t) => {
   );
 });
 
+test("Lodgify context accepts the object and local timestamps returned by messaging v2", async (t) => {
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    const parsed = new URL(url);
+    calls.push(parsed.pathname);
+    if (parsed.pathname === "/v1/reservation/booking/123") {
+      return Response.json({
+        id: 123,
+        type: "Booking",
+        thread_uid: event().threadId,
+        status: "Booked",
+        property_id: 42,
+        property_name: "Test property",
+        arrival: "2026-10-15",
+        departure: "2026-10-18",
+        is_deleted: false,
+      });
+    }
+    if (parsed.pathname === `/v2/messaging/${event().threadId}`) {
+      return Response.json({
+        thread_uid: event().threadId,
+        is_closed: false,
+        messages: [
+          {
+            type: "Renter",
+            message: "Where can I eat tonight?",
+            date_created: "2026-10-21T10:47:53",
+            message_id: "2024bf91-27d2-2d0d-e43f-cca2ef41d406",
+            message_status: "Unknown",
+          },
+        ],
+      });
+    }
+    throw new Error(`Unexpected Lodgify request: ${parsed.pathname}`);
+  });
+
+  const { context } = createLodgifyMessaging("test-api-key");
+  const result = await context(event());
+
+  assert.deepEqual(calls, ["/v1/reservation/booking/123", `/v2/messaging/${event().threadId}`]);
+  assert.equal(result.history.length, 1);
+  assert.equal(result.history[0]?.text, "Where can I eat tonight?");
+  assert.equal(result.outbound[0]?.id, "2024bf91-27d2-2d0d-e43f-cca2ef41d406");
+});
+
 test("rate limited send keeps the verify delivery warning", async (t) => {
   t.mock.method(globalThis, "fetch", async () => new Response("", { status: 429 }));
   const { send } = createLodgifyMessaging("test-api-key");
