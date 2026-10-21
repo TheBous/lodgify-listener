@@ -62,10 +62,12 @@ export function createLodgifyMessaging(
     context: async (event: GuestEvent) => {
       const id = bookingId(event);
       if (id === null) throw new Error("Missing booking ID or enquiry");
-      const [rawBooking, rawThread] = await Promise.all([
-        read(`/v1/reservation/booking/${id}`, "booking", event.threadId),
-        read(`/v2/messaging/${encodeURIComponent(event.threadId)}`, "thread", event.threadId),
-      ]);
+      const rawBooking = await read(`/v1/reservation/booking/${id}`, "booking", event.threadId);
+      const rawThread = await read(
+        `/v2/messaging/${encodeURIComponent(event.threadId)}`,
+        "thread",
+        event.threadId,
+      );
       const parsedBooking = bookingSchema.safeParse(rawBooking);
       if (!parsedBooking.success) {
         logDiagnostic("warn", "lodgify_response_schema_invalid", {
