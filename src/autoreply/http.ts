@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { webhookSchema } from "./contracts.js";
+import { type GuestEvent, webhookSchema } from "./contracts.js";
 import { formatConfigIssues, parseWorkerConfig, type WorkerEnv } from "./environment.js";
 import {
   extractWebhookToken,
@@ -60,22 +60,58 @@ async function handleWebhookBody(
   parsed: unknown,
   env: WorkerEnv,
 ): Promise<Response> {
-  const action = z.object({ action: z.string() }).safeParse(parsed);
-  if (action.success && action.data.action !== "guest_message_received")
-    return new Response("ignored");
-  const event = webhookSchema.safeParse(parsed);
-  if (!event.success) {
-    const issues = schemaIssues(event.error, parsed);
-    console.warn("[webhook] 400 invalid webhook:", issues);
-    return new Response(`invalid webhook: ${issues}`, { status: 400 });
+  // Lodgify delivers a JSON array at the root while its docs show a single object.
+  const isArray = Array.isArray(parsed);
+  const elements: unknown[] = isArray ? parsed : [parsed];
+  if (isArray) {
+    console.warn(
+      `[webhook] array payload: length=${elements.length} actions=${elements.map(elementAction).join("|")}`,
+    );
   }
-  const response = await env.CONVERSATIONS.get(
-    env.CONVERSATIONS.idFromName(event.data.threadId),
-  ).fetch("https://conversation/event", { method: "POST", body: rawBody });
-  if (!response.ok) {
-    console.warn(`[webhook] ${response.status} conversation:`, await response.clone().text());
+  const issues: string[] = [];
+  const accepted: { event: GuestEvent; element: unknown }[] = [];
+  elements.forEach((element, index) => {
+    const action = z.object({ action: z.string() }).safeParse(element);
+    if (action.success && action.data.action !== "guest_message_received") return;
+    const event = webhookSchema.safeParse(element);
+    if (event.success) {
+      accepted.push({ event: event.data, element });
+      return;
+    }
+    const detail = schemaIssues(event.error, element);
+    issues.push(elements.length > 1 ? `[${index}] ${detail}` : detail);
+  });
+  if (issues.length > 0) {
+    const detail = issues.join(", ");
+    console.warn("[webhook] 400 invalid webhook:", detail);
+    return new Response(`invalid webhook: ${detail}`, { status: 400 });
   }
-  return response;
+  if (accepted.length === 0) return new Response("ignored");
+
+  let first: Response | undefined;
+  for (const { event, element } of accepted) {
+    const response = await env.CONVERSATIONS.get(
+      env.CONVERSATIONS.idFromName(event.threadId),
+    ).fetch("https://conversation/event", {
+      method: "POST",
+      // Signature already verified against the raw body; the conversation takes one event.
+      body: isArray ? JSON.stringify(element) : rawBody,
+    });
+    if (!response.ok) {
+      console.warn(`[webhook] ${response.status} conversation:`, await response.clone().text());
+      return response;
+    }
+    first ??= response;
+  }
+  return first as Response;
+}
+
+function elementAction(element: unknown): string {
+  if (element && typeof element === "object" && !Array.isArray(element)) {
+    const action = (element as { action?: unknown }).action;
+    if (typeof action === "string") return action;
+  }
+  return typeof element;
 }
 
 /**
