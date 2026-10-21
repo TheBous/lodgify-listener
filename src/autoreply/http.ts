@@ -26,7 +26,10 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   if (admin) return handleAdmin(request, env, admin);
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
   const body = await readRawBody(request);
-  if (!body.ok) return new Response(body.error, { status: body.status });
+  if (!body.ok) {
+    console.warn(`[webhook] ${body.status} body: ${body.error}`);
+    return new Response(body.error, { status: body.status });
+  }
   const config = parseWorkerConfig(env);
   if (!config.success) return new Response("worker not configured", { status: 503 });
   const token = extractWebhookToken(request, url);
@@ -61,11 +64,49 @@ async function handleWebhookBody(
   if (action.success && action.data.action !== "guest_message_received")
     return new Response("ignored");
   const event = webhookSchema.safeParse(parsed);
-  if (!event.success) return new Response("invalid webhook", { status: 400 });
-  return env.CONVERSATIONS.get(env.CONVERSATIONS.idFromName(event.data.threadId)).fetch(
-    "https://conversation/event",
-    { method: "POST", body: rawBody },
-  );
+  if (!event.success) {
+    const issues = schemaIssues(event.error, parsed);
+    console.warn("[webhook] 400 invalid webhook:", issues);
+    return new Response(`invalid webhook: ${issues}`, { status: 400 });
+  }
+  const response = await env.CONVERSATIONS.get(
+    env.CONVERSATIONS.idFromName(event.data.threadId),
+  ).fetch("https://conversation/event", { method: "POST", body: rawBody });
+  if (!response.ok) {
+    console.warn(`[webhook] ${response.status} conversation:`, await response.clone().text());
+  }
+  return response;
+}
+
+/**
+ * Field path, issue code and value shape for each rejected field.
+ * The shape keeps the structure of a value while replacing its content
+ * (letters → a, digits → d), so guest messages never reach the logs.
+ */
+function schemaIssues(error: z.ZodError, input: unknown): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.join(".") || "(root)";
+      const value = issue.path.reduce<unknown>(
+        (current, key) =>
+          current && typeof current === "object"
+            ? (current as Record<string, unknown>)[String(key)]
+            : undefined,
+        input,
+      );
+      return `${path}:${issue.code}:${valueShape(value)}`;
+    })
+    .join(", ");
+}
+
+function valueShape(value: unknown): string {
+  if (value === undefined) return "(absent)";
+  if (value === null) return "null";
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "object") return Array.isArray(value) ? "array" : "object";
+  if (typeof value !== "string") return typeof value;
+  return value.replace(/[a-z]/gi, "a").replace(/\d/g, "d").slice(0, 60) || "(empty)";
 }
 
 async function handleAdmin(
