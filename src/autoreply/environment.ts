@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ReplyDependencies } from "./contracts.js";
+import { errorType, logDiagnostic, logProviderRequest } from "./diagnostics.js";
 import { createLodgifyMessaging } from "./lodgify.js";
 import { createReplyGenerator } from "./openai.js";
 
@@ -65,22 +66,92 @@ export function createReplyDependencies(env: WorkerEnv): ReplyDependencies {
       model: config.OPENAI_MODEL,
       propertyContexts: config.PROPERTY_CONTEXTS_JSON,
     }),
-    notify: async (text) => {
+    notify: async (text, threadId) => {
       // Telegram has no idempotency key: a retry after a timeout may duplicate an alert.
       const results = await Promise.allSettled(
-        chatIds.map(async (chatId) => {
-          const response = await fetch(
-            `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`,
-            {
+        chatIds.map(async (chatId, recipientIndex) => {
+          const startedAt = Date.now();
+          let response: Response;
+          try {
+            response = await fetch(
+              `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`,
+              {
+                method: "POST",
+                signal: AbortSignal.timeout(4000),
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4096) }),
+              },
+            );
+          } catch (error) {
+            logProviderRequest({
+              provider: "telegram",
+              operation: "notification.send",
               method: "POST",
-              signal: AbortSignal.timeout(4000),
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4096) }),
-            },
-          );
-          const body = z.object({ ok: z.literal(true) }).safeParse(await response.json());
-          if (!response.ok || !body.success) throw new Error("Telegram delivery failed");
+              durationMs: Date.now() - startedAt,
+              status: null,
+              threadId,
+              recipientIndex,
+              outcome: "network_error",
+              errorType: errorType(error),
+            });
+            throw new Error(`Telegram notification network failure (${errorType(error)})`);
+          }
+          let responseBody: unknown;
+          try {
+            responseBody = await response.json();
+          } catch (error) {
+            logProviderRequest({
+              provider: "telegram",
+              operation: "notification.send",
+              method: "POST",
+              durationMs: Date.now() - startedAt,
+              status: response.status,
+              response,
+              threadId,
+              recipientIndex,
+              outcome: "invalid_response",
+              errorType: errorType(error),
+            });
+            throw new Error("Telegram returned invalid JSON");
+          }
+          const body = z
+            .object({ ok: z.boolean().optional(), error_code: z.number().optional() })
+            .passthrough()
+            .safeParse(responseBody);
+          const success = response.ok && body.success && body.data.ok === true;
+          logProviderRequest({
+            provider: "telegram",
+            operation: "notification.send",
+            method: "POST",
+            durationMs: Date.now() - startedAt,
+            status: response.status,
+            response,
+            threadId,
+            recipientIndex,
+            outcome: success
+              ? "success"
+              : !response.ok
+                ? "http_error"
+                : body.success
+                  ? "provider_error"
+                  : "invalid_response",
+            ...(body.success && body.data.error_code !== undefined
+              ? { providerErrorCode: body.data.error_code }
+              : {}),
+          });
+          if (!success) throw new Error("Telegram delivery failed");
         }),
+      );
+      const delivered = results.filter((result) => result.status === "fulfilled").length;
+      logDiagnostic(
+        delivered === results.length ? "info" : "warn",
+        "telegram_notification_summary",
+        {
+          recipientCount: results.length,
+          deliveredCount: delivered,
+          failedCount: results.length - delivered,
+          ...(threadId ? { threadId } : {}),
+        },
       );
       if (results.length === 0 || results.some((result) => result.status === "rejected")) {
         throw new Error("Telegram delivery failed for one or more recipients");

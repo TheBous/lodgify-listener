@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { bookingId, fingerprint, type GuestEvent, type ReplyDependencies } from "./contracts.js";
+import { errorType, logDiagnostic, validationIssues } from "./diagnostics.js";
+import { requestLodgify } from "./lodgify-request.js";
 
 const bookingSchema = z.object({
   id: z.number().int(),
@@ -33,36 +35,74 @@ const threadSchema = z.array(
 export function createLodgifyMessaging(
   apiKey: string,
 ): Pick<ReplyDependencies, "context" | "send"> {
-  const headers = {
-    "X-ApiKey": apiKey,
-    "content-type": "application/json",
-    accept: "application/json",
-  };
-  async function read(path: string, label: string): Promise<unknown> {
-    const response = await fetch(`https://api.lodgify.com${path}`, {
-      headers,
-      signal: AbortSignal.timeout(4000),
+  async function read(path: string, label: string, threadId: string): Promise<unknown> {
+    const response = await requestLodgify({
+      apiKey,
+      operation: `${label}.read`,
+      label,
+      kind: "read",
+      method: "GET",
+      path,
+      threadId,
     });
-    if (!response.ok) throw new Error(failure("read", response, label));
-    return response.json();
+    try {
+      return await response.json();
+    } catch (error) {
+      logDiagnostic("warn", "provider_response_invalid_json", {
+        provider: "lodgify",
+        operation: `${label}.read`,
+        status: response.status,
+        threadId,
+        errorType: errorType(error),
+      });
+      throw new Error(`Lodgify ${label} read returned invalid JSON`);
+    }
   }
   return {
     context: async (event: GuestEvent) => {
       const id = bookingId(event);
       if (id === null) throw new Error("Missing booking ID or enquiry");
       const [rawBooking, rawThread] = await Promise.all([
-        read(`/v1/reservation/booking/${id}`, "booking"),
-        read(`/v2/messaging/${encodeURIComponent(event.threadId)}`, "thread"),
+        read(`/v1/reservation/booking/${id}`, "booking", event.threadId),
+        read(`/v2/messaging/${encodeURIComponent(event.threadId)}`, "thread", event.threadId),
       ]);
-      const booking = bookingSchema.parse(rawBooking);
+      const parsedBooking = bookingSchema.safeParse(rawBooking);
+      if (!parsedBooking.success) {
+        logDiagnostic("warn", "lodgify_response_schema_invalid", {
+          operation: "booking.read",
+          threadId: event.threadId,
+          issues: validationIssues(parsedBooking.error),
+        });
+        throw new Error("Lodgify booking response failed schema validation");
+      }
+      const booking = parsedBooking.data;
       if (booking.id !== id || booking.thread_uid !== event.threadId) {
+        logDiagnostic("warn", "lodgify_booking_thread_mismatch", {
+          threadId: event.threadId,
+          bookingIdMatched: booking.id === id,
+          threadIdMatched: booking.thread_uid === event.threadId,
+        });
         throw new Error("Booking and thread do not match");
       }
-      const thread = threadSchema
-        .parse(rawThread)
-        .find((item) => item.thread_uid === event.threadId);
-      if (!thread || thread.is_closed || !thread.messages)
+      const parsedThread = threadSchema.safeParse(rawThread);
+      if (!parsedThread.success) {
+        logDiagnostic("warn", "lodgify_response_schema_invalid", {
+          operation: "thread.read",
+          threadId: event.threadId,
+          issues: validationIssues(parsedThread.error),
+        });
+        throw new Error("Lodgify thread response failed schema validation");
+      }
+      const thread = parsedThread.data.find((item) => item.thread_uid === event.threadId);
+      if (!thread || thread.is_closed || !thread.messages) {
+        logDiagnostic("warn", "lodgify_thread_unavailable", {
+          threadId: event.threadId,
+          found: Boolean(thread),
+          closed: thread?.is_closed ?? null,
+          hasMessages: thread?.messages !== null && thread?.messages !== undefined,
+        });
         throw new Error("Thread unavailable or closed");
+      }
       const history = thread.messages
         .filter((message) => message.type !== "Comment")
         .sort((left, right) => Date.parse(left.date_created) - Date.parse(right.date_created))
@@ -74,6 +114,25 @@ export function createLodgifyMessaging(
             .slice(0, 1500),
           sentAt: message.date_created,
         }));
+      const messageCounts = {
+        total: thread.messages.length,
+        owner: thread.messages.filter((message) => message.type === "Owner").length,
+        renter: thread.messages.filter((message) => message.type === "Renter").length,
+        comment: thread.messages.filter((message) => message.type === "Comment").length,
+      };
+      const outbound = thread.messages.flatMap((message) =>
+        message.message_id
+          ? [{ id: message.message_id, status: message.message_status ?? null }]
+          : [],
+      );
+      logDiagnostic("info", "lodgify_context_loaded", {
+        threadId: event.threadId,
+        bookingStatus: booking.status,
+        bookingDeleted: booking.is_deleted,
+        threadMessageCounts: messageCounts,
+        historyMessageCount: history.length,
+        outboundMessageCount: outbound.length,
+      });
       return {
         booking: {
           id,
@@ -87,23 +146,23 @@ export function createLodgifyMessaging(
         },
         history,
         fingerprint: await fingerprint({ booking, history }),
-        outbound: thread.messages.flatMap((message) =>
-          message.message_id
-            ? [{ id: message.message_id, status: message.message_status ?? null }]
-            : [],
-        ),
+        outbound,
       };
     },
     send: async (job) => {
       const event = job.events[0];
-      const id = event ? bookingId(event) : null;
+      if (!event) throw new Error("Cannot send without a conversation event");
+      const id = bookingId(event);
       if (id === null) throw new Error("Cannot send without booking ID");
-      const response = await fetch(
-        `https://api.lodgify.com/v1/reservation/booking/${id}/messages`,
-        {
+      try {
+        await requestLodgify({
+          apiKey,
+          operation: "message.send",
+          label: "messages",
+          kind: "send",
           method: "POST",
-          headers,
-          signal: AbortSignal.timeout(4000),
+          path: `/v1/reservation/booking/${id}/messages`,
+          threadId: event.threadId,
           body: JSON.stringify([
             {
               message: job.decision.reply,
@@ -112,17 +171,12 @@ export function createLodgifyMessaging(
               message_id: job.replyId,
             },
           ]),
-        },
-      );
-      if (!response.ok)
-        throw new Error(`${failure("send", response, "messages")}; verify delivery`);
+        });
+      } catch (error) {
+        if (error instanceof Error)
+          throw new Error(`${error.message}; verify delivery`, { cause: error });
+        throw error;
+      }
     },
   };
-}
-
-/** Endpoint label and Retry-After only — never ids, safe for logs and Telegram. */
-function failure(kind: "read" | "send", response: Response, label: string): string {
-  const retryAfter = response.headers.get("retry-after");
-  const hint = response.status === 429 && retryAfter ? ` retry-after=${retryAfter}s` : "";
-  return `Lodgify ${kind} failed (${response.status}) ${label}${hint}`;
 }

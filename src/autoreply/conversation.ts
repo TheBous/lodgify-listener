@@ -1,5 +1,6 @@
 import { type ConversationState, emptyState, webhookSchema } from "./contracts.js";
 import { controlConversation } from "./control.js";
+import { errorType, logDiagnostic } from "./diagnostics.js";
 import { createReplyDependencies, type WorkerEnv } from "./environment.js";
 import { handleJobFailure, processJob } from "./processing.js";
 import { acceptEvent, persistWork } from "./storage.js";
@@ -19,7 +20,26 @@ export class Conversation {
       if (path !== "/event") return this.control(state, path);
       const event = webhookSchema.safeParse(input);
       if (!event.success) return new Response("invalid webhook", { status: 400 });
-      return acceptEvent(this.ctx.storage, event.data);
+      const response = await acceptEvent(this.ctx.storage, event.data);
+      const responseText = await response.clone().text();
+      const knownOutcomes = new Set([
+        "queued",
+        "duplicate",
+        "message ID conflict",
+        "expired",
+        "future timestamp",
+        "conversation buffer full",
+      ]);
+      logDiagnostic(response.status >= 400 ? "warn" : "info", "conversation_event_received", {
+        threadId: event.data.threadId,
+        messageCreatedAt: event.data.createdAt,
+        messageLength: event.data.message.length,
+        hasAttachments: event.data.hasAttachments,
+        bookingReferencePresent: Boolean(event.data.bookingId),
+        responseStatus: response.status,
+        queueOutcome: knownOutcomes.has(responseText) ? responseText : "unknown",
+      });
+      return response;
     });
   }
 
@@ -38,24 +58,66 @@ export class Conversation {
   }
 
   private async runJob(state: ConversationState): Promise<void> {
+    const initialJob = state.job;
+    if (!initialJob) return;
+    const startedAt = Date.now();
+    const attempt = initialJob.attempts + 1;
+    const threadId = initialJob.events[0]?.threadId;
+    const dryRun = this.env.AUTO_REPLY_ENABLED !== "true";
+    logDiagnostic("info", "conversation_job_started", {
+      ...(threadId ? { threadId } : {}),
+      kind: initialJob.kind,
+      attempt,
+      eventCount: initialJob.events.length,
+      mode: state.mode,
+      pendingCount: state.pending.length,
+      dryRun,
+    });
+    let failureType: string | undefined;
     try {
       await processJob({
         state,
         dependencies: createReplyDependencies(this.env),
-        dryRun: this.env.AUTO_REPLY_ENABLED !== "true",
+        dryRun,
         save: () => this.ctx.storage.put("state", state),
       });
     } catch (error) {
+      failureType = errorType(error);
       handleJobFailure(state, error);
-      console.error(JSON.stringify({ event: "conversation_job_failed", error: state.lastError }));
+      logDiagnostic("error", "conversation_job_failed", {
+        ...(threadId ? { threadId } : {}),
+        kind: initialJob.kind,
+        attempt,
+        errorType: failureType,
+        error: state.lastError,
+        mode: state.mode,
+        resultingJobKind: state.job?.kind ?? null,
+      });
     }
     await persistWork(this.ctx.storage, state);
+    logDiagnostic(failureType ? "warn" : "info", "conversation_job_finished", {
+      ...(threadId ? { threadId } : {}),
+      kind: initialJob.kind,
+      attempt,
+      outcome: failureType ? "failed" : "completed",
+      durationMs: Date.now() - startedAt,
+      mode: state.mode,
+      resultingJobKind: state.job?.kind ?? null,
+      pendingCount: state.pending.length,
+      lastError: state.lastError,
+    });
   }
 
   private async control(state: ConversationState, path: string): Promise<Response> {
     const error = controlConversation(state, path);
     if (error) return error;
     await persistWork(this.ctx.storage, state);
+    logDiagnostic("info", "conversation_control_applied", {
+      action: path.slice(1),
+      mode: state.mode,
+      jobKind: state.job?.kind ?? null,
+      pendingCount: state.pending.length,
+    });
     return status(state);
   }
 }

@@ -1,10 +1,17 @@
 import { type ConversationState, type DeliveryJob, firstEvent } from "./contracts.js";
+import { logDiagnostic } from "./diagnostics.js";
 import type { ProcessingOptions } from "./processing.js";
 import { notificationJob } from "./state.js";
 
 export async function deliverReply(options: ProcessingOptions, job: DeliveryJob): Promise<void> {
   const { state, dependencies, save } = options;
   if (options.dryRun) {
+    logDiagnostic("info", "guest_reply_not_sent", {
+      threadId: firstEvent(job.events).threadId,
+      reason: "dry_run_enabled",
+      escalation: job.decision.escalation,
+      replyLength: job.decision.reply.length,
+    });
     state.job = notificationJob(
       job,
       "ANTEPRIMA: nessun messaggio inviato all'ospite.",
@@ -16,9 +23,17 @@ export async function deliverReply(options: ProcessingOptions, job: DeliveryJob)
   const receipt = context.outbound.find((message) => message.id === job.replyId);
   if (receipt) {
     if (receipt.status === "Sent" || receipt.status === "Delivered") {
+      logDiagnostic("info", "lodgify_delivery_reconciled", {
+        threadId: firstEvent(job.events).threadId,
+        status: receipt.status,
+      });
       completeDelivery(state, job);
       return;
     }
+    logDiagnostic("warn", "lodgify_delivery_unresolved", {
+      threadId: firstEvent(job.events).threadId,
+      status: receipt.status,
+    });
     // Submitted/unknown can still be delivered later; do not submit another message.
     throw new Error(`Message ${job.replyId} status ${receipt.status ?? "unknown"}; verify Lodgify`);
   }
@@ -28,6 +43,13 @@ export async function deliverReply(options: ProcessingOptions, job: DeliveryJob)
     context.booking.deleted
   ) {
     state.mode = "human";
+    logDiagnostic("warn", "guest_reply_not_sent", {
+      threadId: firstEvent(job.events).threadId,
+      reason: context.fingerprint !== job.fingerprint ? "conversation_changed" : "booking_changed",
+      wasPreviouslySubmitted: job.submitted,
+      bookingStatus: context.booking.status,
+      bookingDeleted: context.booking.deleted,
+    });
     state.job = notificationJob(
       job,
       job.submitted
@@ -45,6 +67,11 @@ export async function deliverReply(options: ProcessingOptions, job: DeliveryJob)
 function completeDelivery(state: ConversationState, job: DeliveryJob): void {
   state.lastError = null;
   if (job.decision.escalation === "umano") state.mode = "human";
+  logDiagnostic("info", "lodgify_delivery_completed", {
+    threadId: firstEvent(job.events).threadId,
+    escalation: job.decision.escalation,
+    mode: state.mode,
+  });
   state.job =
     job.decision.escalation === "no"
       ? null
