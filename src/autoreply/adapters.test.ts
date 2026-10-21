@@ -31,6 +31,36 @@ test("Lodgify sends Owner notification with the same persisted idempotency key",
   assert.deepEqual(bodies[1], bodies[0]);
 });
 
+test("rate limited reads name the endpoint and Retry-After", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("slow down", { status: 429, headers: { "retry-after": "30" } }),
+  );
+  const { context } = createLodgifyMessaging("test-api-key");
+  await assert.rejects(
+    context(event()),
+    /Lodgify read failed \(429\) (booking|thread) retry-after=30s/,
+  );
+});
+
+test("rate limited send keeps the verify delivery warning", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response("", { status: 429 }));
+  const { send } = createLodgifyMessaging("test-api-key");
+  await assert.rejects(
+    send({
+      kind: "deliver",
+      events: [event()],
+      decision: { escalation: "no", reply: "Hello" },
+      fingerprint: "history",
+      replyId: crypto.randomUUID(),
+      submitted: false,
+      attempts: 0,
+    }),
+    /Lodgify send failed \(429\) messages; verify delivery/,
+  );
+});
+
 test("generator uses only matching property manual and rejects invalid or truncated replies", async (t) => {
   let output: unknown = modelResponse({ escalation: "no", reply: "Welcome — check-in at 4 PM." });
   t.mock.method(globalThis, "fetch", async (url: string, options: RequestInit) => {

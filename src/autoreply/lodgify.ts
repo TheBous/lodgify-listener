@@ -38,12 +38,12 @@ export function createLodgifyMessaging(
     "content-type": "application/json",
     accept: "application/json",
   };
-  async function read(path: string): Promise<unknown> {
+  async function read(path: string, label: string): Promise<unknown> {
     const response = await fetch(`https://api.lodgify.com${path}`, {
       headers,
       signal: AbortSignal.timeout(4000),
     });
-    if (!response.ok) throw new Error(`Lodgify read failed (${response.status})`);
+    if (!response.ok) throw new Error(failure("read", response, label));
     return response.json();
   }
   return {
@@ -51,8 +51,8 @@ export function createLodgifyMessaging(
       const id = bookingId(event);
       if (id === null) throw new Error("Missing booking ID or enquiry");
       const [rawBooking, rawThread] = await Promise.all([
-        read(`/v1/reservation/booking/${id}`),
-        read(`/v2/messaging/${encodeURIComponent(event.threadId)}`),
+        read(`/v1/reservation/booking/${id}`, "booking"),
+        read(`/v2/messaging/${encodeURIComponent(event.threadId)}`, "thread"),
       ]);
       const booking = bookingSchema.parse(rawBooking);
       if (booking.id !== id || booking.thread_uid !== event.threadId) {
@@ -115,7 +115,14 @@ export function createLodgifyMessaging(
         },
       );
       if (!response.ok)
-        throw new Error(`Lodgify send failed (${response.status}); verify delivery`);
+        throw new Error(`${failure("send", response, "messages")}; verify delivery`);
     },
   };
+}
+
+/** Endpoint label and Retry-After only — never ids, safe for logs and Telegram. */
+function failure(kind: "read" | "send", response: Response, label: string): string {
+  const retryAfter = response.headers.get("retry-after");
+  const hint = response.status === 429 && retryAfter ? ` retry-after=${retryAfter}s` : "";
+  return `Lodgify ${kind} failed (${response.status}) ${label}${hint}`;
 }
