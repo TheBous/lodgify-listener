@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { webhookSchema } from "./contracts.js";
-import { parseWorkerConfig, type WorkerEnv } from "./environment.js";
+import { formatConfigIssues, parseWorkerConfig, type WorkerEnv } from "./environment.js";
 import {
   extractWebhookToken,
   msSignatureHeader,
@@ -16,8 +16,13 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   );
   if (!admin && url.pathname !== "/webhook/lodgify")
     return new Response("not found", { status: 404 });
-  if (!parseWorkerConfig(env).success)
-    return new Response("worker not configured", { status: 503 });
+  const bootConfig = parseWorkerConfig(env);
+  if (!bootConfig.success) {
+    // Field paths only — same contract as formatConfigIssues for Cloudflare logs.
+    const issues = formatConfigIssues(bootConfig.error);
+    console.warn("[worker] 503 config:", issues);
+    return new Response(`worker not configured: ${issues}`, { status: 503 });
+  }
   if (admin) return handleAdmin(request, env, admin);
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
   const body = await readRawBody(request);

@@ -25,7 +25,10 @@ const configSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_CHAT_ID: z.string().min(1),
   WEBHOOK_TOKEN: z.string().min(32),
-  LODGIFY_WEBHOOK_SECRET: z.string().min(16).optional(),
+  LODGIFY_WEBHOOK_SECRET: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().min(16).optional(),
+  ),
   ADMIN_TOKEN: z.string().min(32),
   PROPERTY_CONTEXTS_JSON: z
     .string()
@@ -43,6 +46,11 @@ const configSchema = z.object({
 
 export function parseWorkerConfig(env: WorkerEnv) {
   return configSchema.safeParse(env);
+}
+
+/** Field paths only — safe for Cloudflare logs. */
+export function formatConfigIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => issue.path.join(".") || issue.message).join(", ");
 }
 
 export function createReplyDependencies(env: WorkerEnv): ReplyDependencies {
