@@ -156,6 +156,30 @@ così il bot riprende soltanto dai nuovi messaggi. Se un job non è completato r
   Le risposte non sono garantite corrette dal solo schema: la prova sui tuoi casi
   reali e il controllo del manuale restano necessari.
 
+## Diagnostica dei job
+
+I log del Worker sono JSON strutturati. Per seguire una richiesta, cerca il valore
+`threadId` della notifica Telegram e ricostruisci gli eventi in ordine temporale:
+
+- `lodgify_webhook_event_forwarding` / `lodgify_webhook_event_forwarded`: messaggio
+  ricevuto, caratteristiche non testuali e stato con cui è stato accodato;
+- `conversation_job_started` / `conversation_job_finished` / `conversation_job_failed`:
+  fase, numero del tentativo, modalità auto/manuale, job successivo e ultimo errore;
+- `guest_reply_suppressed` / `guest_reply_not_sent`: motivo codificato per cui il
+  worker ha scelto di non preparare o non inviare una risposta;
+- `provider_request`: provider, operazione (`booking.read`, `thread.read`,
+  `reply.generate`, `message.send`, `notification.send`), metodo, status HTTP, durata,
+  esito, identificativo richiesta del provider e header di rate limit disponibili;
+- `lodgify_context_loaded`, `lodgify_response_schema_invalid`, `lodgify_delivery_*`
+  e gli eventi `openai_*`: esito dei controlli sul contesto, consegna e forma delle
+  risposte, senza registrare i contenuti;
+- `telegram_notification_summary`: numero di notifiche consegnate o fallite.
+
+I log non includono testo dell'ospite o della risposta, nome dell'ospite, token,
+chiavi API o ID delle chat Telegram. Registrano l'UUID del thread per correlare gli
+eventi con la notifica. Gli errori HTTP includono solo status e metadati selezionati;
+il corpo delle risposte dei provider non viene registrato.
+
 ## Fonti dei contratti
 
 - [Webhook Lodgify](https://docs.lodgify.com/reference/webhook-objects)

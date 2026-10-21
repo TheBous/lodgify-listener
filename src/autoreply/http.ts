@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { type GuestEvent, webhookSchema } from "./contracts.js";
+import { logDiagnostic } from "./diagnostics.js";
 import { formatConfigIssues, parseWorkerConfig, type WorkerEnv } from "./environment.js";
 import {
   extractWebhookToken,
@@ -8,6 +9,7 @@ import {
   webhookAuthDebug,
   webhookAuthorized,
 } from "./lodgify-webhook-auth.js";
+import { schemaIssues } from "./webhook-validation.js";
 
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
@@ -69,13 +71,13 @@ async function handleWebhookBody(
     );
   }
   const issues: string[] = [];
-  const accepted: { event: GuestEvent; element: unknown }[] = [];
+  const accepted: { event: GuestEvent; element: unknown; index: number }[] = [];
   elements.forEach((element, index) => {
     const action = z.object({ action: z.string() }).safeParse(element);
     if (action.success && action.data.action !== "guest_message_received") return;
     const event = webhookSchema.safeParse(element);
     if (event.success) {
-      accepted.push({ event: event.data, element });
+      accepted.push({ event: event.data, element, index });
       return;
     }
     const detail = schemaIssues(event.error, element);
@@ -89,13 +91,28 @@ async function handleWebhookBody(
   if (accepted.length === 0) return new Response("ignored");
 
   let first: Response | undefined;
-  for (const { event, element } of accepted) {
+  for (const { event, element, index } of accepted) {
+    logDiagnostic("info", "lodgify_webhook_event_forwarding", {
+      threadId: event.threadId,
+      eventIndex: index,
+      batchSize: elements.length,
+      messageCreatedAt: event.createdAt,
+      messageLength: event.message.length,
+      hasAttachments: event.hasAttachments,
+      bookingReferencePresent: Boolean(event.bookingId),
+    });
     const response = await env.CONVERSATIONS.get(
       env.CONVERSATIONS.idFromName(event.threadId),
     ).fetch("https://conversation/event", {
       method: "POST",
       // Signature already verified against the raw body; the conversation takes one event.
       body: isArray ? JSON.stringify(element) : rawBody,
+    });
+    logDiagnostic(response.status >= 400 ? "warn" : "info", "lodgify_webhook_event_forwarded", {
+      threadId: event.threadId,
+      eventIndex: index,
+      batchSize: elements.length,
+      responseStatus: response.status,
     });
     if (!response.ok) {
       console.warn(`[webhook] ${response.status} conversation:`, await response.clone().text());
@@ -112,37 +129,6 @@ function elementAction(element: unknown): string {
     if (typeof action === "string") return action;
   }
   return typeof element;
-}
-
-/**
- * Field path, issue code and value shape for each rejected field.
- * The shape keeps the structure of a value while replacing its content
- * (letters → a, digits → d), so guest messages never reach the logs.
- */
-function schemaIssues(error: z.ZodError, input: unknown): string {
-  return error.issues
-    .map((issue) => {
-      const path = issue.path.join(".") || "(root)";
-      const value = issue.path.reduce<unknown>(
-        (current, key) =>
-          current && typeof current === "object"
-            ? (current as Record<string, unknown>)[String(key)]
-            : undefined,
-        input,
-      );
-      return `${path}:${issue.code}:${valueShape(value)}`;
-    })
-    .join(", ");
-}
-
-function valueShape(value: unknown): string {
-  if (value === undefined) return "(absent)";
-  if (value === null) return "null";
-  if (typeof value === "number") return "number";
-  if (typeof value === "boolean") return String(value);
-  if (typeof value === "object") return Array.isArray(value) ? "array" : "object";
-  if (typeof value !== "string") return typeof value;
-  return value.replace(/[a-z]/gi, "a").replace(/\d/g, "d").slice(0, 60) || "(empty)";
 }
 
 async function handleAdmin(

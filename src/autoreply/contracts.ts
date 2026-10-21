@@ -56,7 +56,7 @@ export interface ReplyDependencies {
   context: (event: GuestEvent) => Promise<ConversationContext>;
   generate: (events: GuestEvent[], context: ConversationContext) => Promise<ReplyDecision>;
   send: (job: DeliveryJob) => Promise<void>;
-  notify: (text: string) => Promise<void>;
+  notify: (text: string, threadId?: string) => Promise<void>;
 }
 
 export type Job =

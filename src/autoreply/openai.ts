@@ -1,26 +1,7 @@
-import { z } from "zod";
-import { decisionSchema, type ReplyDependencies } from "./contracts.js";
+import type { ReplyDependencies } from "./contracts.js";
+import { errorType, logDiagnostic, logProviderRequest } from "./diagnostics.js";
+import { parseOpenAIReply } from "./openai-response.js";
 import { REPLY_RULES } from "./prompt.js";
-
-const responseSchema = z.object({
-  status: z.literal("completed"),
-  output: z.array(
-    z.discriminatedUnion("type", [
-      z.object({ type: z.literal("reasoning") }),
-      z.object({
-        type: z.literal("message"),
-        role: z.literal("assistant"),
-        status: z.literal("completed"),
-        content: z.array(
-          z.discriminatedUnion("type", [
-            z.object({ type: z.literal("output_text"), text: z.string() }),
-            z.object({ type: z.literal("refusal"), refusal: z.string() }),
-          ]),
-        ),
-      }),
-    ]),
-  ),
-});
 
 export function createReplyGenerator(options: {
   apiKey: string;
@@ -29,66 +10,103 @@ export function createReplyGenerator(options: {
 }): ReplyDependencies["generate"] {
   return async (events, context) => {
     const manual = options.propertyContexts[String(context.booking.propertyId)];
-    if (!manual?.trim()) throw new Error("Missing manual for this property");
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      signal: AbortSignal.timeout(8000),
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${options.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: options.model,
-        store: false,
-        reasoning: { effort: "low" },
-        max_output_tokens: 2000,
-        instructions: REPLY_RULES,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "guest_reply",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                reply: { type: "string" },
-                escalation: { type: "string", enum: ["no", "notifica", "umano", "ignore"] },
+    const threadId = events[0]?.threadId;
+    if (!manual?.trim()) {
+      logDiagnostic("warn", "guest_reply_suppressed", {
+        threadId,
+        reason: "property_manual_missing",
+      });
+      throw new Error("Missing manual for this property");
+    }
+    logDiagnostic("info", "openai_request_started", {
+      threadId,
+      model: options.model,
+      eventCount: events.length,
+      historyMessageCount: context.history.length,
+      manualLength: manual.length,
+      guestMessageCharacters: events.reduce((total, event) => total + event.message.length, 0),
+      maxOutputTokens: 2000,
+      store: false,
+    });
+    const startedAt = Date.now();
+    let response: Response;
+    try {
+      response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        signal: AbortSignal.timeout(8000),
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: options.model,
+          store: false,
+          reasoning: { effort: "low" },
+          max_output_tokens: 2000,
+          instructions: REPLY_RULES,
+          text: {
+            format: {
+              type: "json_schema",
+              name: "guest_reply",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  reply: { type: "string" },
+                  escalation: { type: "string", enum: ["no", "notifica", "umano", "ignore"] },
+                },
+                required: ["reply", "escalation"],
+                additionalProperties: false,
               },
-              required: ["reply", "escalation"],
-              additionalProperties: false,
             },
           },
-        },
-        input: [
-          {
-            role: "user",
-            content: JSON.stringify({
-              now: new Intl.DateTimeFormat("it-IT", {
-                timeZone: "Europe/Rome",
-                dateStyle: "full",
-                timeStyle: "short",
-              }).format(new Date()),
-              manual,
-              booking: context.booking,
-              history: context.history,
-              new_messages: events.map((event) => ({
-                guest: event.guestName,
-                sentAt: event.createdAt,
-                text: event.message || "[Attachment without text]",
-              })),
-            }),
-          },
-        ],
-      }),
+          input: [
+            {
+              role: "user",
+              content: JSON.stringify({
+                now: new Intl.DateTimeFormat("it-IT", {
+                  timeZone: "Europe/Rome",
+                  dateStyle: "full",
+                  timeStyle: "short",
+                }).format(new Date()),
+                manual,
+                booking: context.booking,
+                history: context.history,
+                new_messages: events.map((event) => ({
+                  guest: event.guestName,
+                  sentAt: event.createdAt,
+                  text: event.message || "[Attachment without text]",
+                })),
+              }),
+            },
+          ],
+        }),
+      });
+    } catch (error) {
+      logProviderRequest({
+        provider: "openai",
+        operation: "reply.generate",
+        method: "POST",
+        durationMs: Date.now() - startedAt,
+        status: null,
+        threadId,
+        outcome: "network_error",
+        errorType: errorType(error),
+      });
+      throw new Error(`OpenAI reply generation network failure (${errorType(error)})`);
+    }
+    logProviderRequest({
+      provider: "openai",
+      operation: "reply.generate",
+      method: "POST",
+      durationMs: Date.now() - startedAt,
+      status: response.status,
+      response,
+      threadId,
+      outcome: response.ok ? "success" : "http_error",
     });
     if (!response.ok) throw new Error(`OpenAI reply generation failed (${response.status})`);
-    const parsed = responseSchema.parse(await response.json());
-    const content = parsed.output.flatMap((item) => (item.type === "message" ? item.content : []));
-    const output = content[0];
-    if (content.length !== 1 || output?.type !== "output_text") {
-      throw new Error("OpenAI returned no complete reply or refused the request");
-    }
-    const decision = decisionSchema.parse(JSON.parse(output.text));
+    const decision = await parseOpenAIReply(response, threadId);
     if (decision.escalation === "ignore") return decision;
     return { ...decision, reply: decision.reply.replace(/[\u2013\u2014]/g, ",") };
   };
